@@ -17,6 +17,7 @@ import difflib
 
 class Colors:
     """ANSI颜色代码"""
+    # 基础颜色
     RED = '\033[91m'
     GREEN = '\033[92m'
     YELLOW = '\033[93m'
@@ -24,14 +25,51 @@ class Colors:
     MAGENTA = '\033[95m'
     CYAN = '\033[96m'
     WHITE = '\033[97m'
+    GRAY = '\033[90m'
+    
+    # 样式
     BOLD = '\033[1m'
+    DIM = '\033[2m'
     UNDERLINE = '\033[4m'
     RESET = '\033[0m'
+    
+    # 背景色
+    BG_RED = '\033[101m'
+    BG_GREEN = '\033[102m'
+    BG_YELLOW = '\033[103m'
+    BG_BLUE = '\033[104m'
 
-def colored_print(text: str, color: str = Colors.RESET, bold: bool = False):
+def colored_print(text: str, color: str = Colors.RESET, bold: bool = False, end='\n'):
     """打印彩色文本"""
     prefix = Colors.BOLD if bold else ""
-    print(f"{prefix}{color}{text}{Colors.RESET}")
+    print(f"{prefix}{color}{text}{Colors.RESET}", end=end)
+
+def clear_line():
+    """清除当前行"""
+    print('\r' + ' ' * 80 + '\r', end='', flush=True)
+
+def get_progress_bar(current: int, total: int, width: int = 20) -> str:
+    """生成进度条"""
+    if total == 0:
+        return '[' + '=' * width + ']'
+    percent = current / total
+    filled = int(width * percent)
+    bar = '█' * filled + '░' * (width - filled)
+    return f'[{bar}]'
+
+def get_status_icon(status: str) -> str:
+    """获取状态图标"""
+    icons = {
+        'running': '⚡',
+        'compiling': '🔨',
+        'linking': '🔗',
+        'testing': '🧪',
+        'passed': '✅',
+        'failed': '❌',
+        'warning': '⚠️',
+        'info': 'ℹ️'
+    }
+    return icons.get(status, '•')
 
 def run_command(cmd: List[str], input_text: str = "", timeout: int = 30) -> Tuple[int, str, str]:
     """运行命令并返回退出码、标准输出和标准错误"""
@@ -45,34 +83,38 @@ def run_command(cmd: List[str], input_text: str = "", timeout: int = 30) -> Tupl
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
-        return -1, "", "Command timed out"
+        return -1, "", f"Command timed out after {timeout} seconds"
     except Exception as e:
         return -1, "", str(e)
 
-def compile_program(compiler_cmd: List[str], source_file: str, asm_file: str, verbose: bool = True) -> bool:
+def compile_program(compiler_cmd: List[str], source_file: str, asm_file: str, verbose: bool = True, timeout: int = 5) -> bool:
     """编译程序生成汇编代码"""
     if verbose:
-        colored_print(f"编译: {' '.join(compiler_cmd + [source_file, '-o', asm_file])}", Colors.CYAN)
+        print(f"\n{get_status_icon('compiling')} {Colors.CYAN}{Colors.BOLD}编译源文件{Colors.RESET}")
+        print(f"   {Colors.DIM}命令: {' '.join(compiler_cmd + [source_file, '-o', asm_file])}{Colors.RESET}")
     
     # 生成汇编代码
     cmd = compiler_cmd + [source_file, '-o', asm_file]
     
-    returncode, stdout, stderr = run_command(cmd)
+    returncode, stdout, stderr = run_command(cmd, timeout=timeout)
     
     if returncode != 0:
         if verbose:
-            colored_print(f"编译失败:", Colors.RED, bold=True)
-            colored_print(stderr, Colors.RED)
+            print(f"   {get_status_icon('failed')} {Colors.RED}{Colors.BOLD}编译失败{Colors.RESET}")
+            if stderr:
+                print(f"   {Colors.RED}错误信息:{Colors.RESET}")
+                for line in stderr.strip().split('\n'):
+                    print(f"   {Colors.DIM}{line}{Colors.RESET}")
         return False
     
     # 检查汇编文件是否生成
     if not os.path.exists(asm_file):
         if verbose:
-            colored_print(f"编译失败: 汇编文件未生成 {asm_file}", Colors.RED, bold=True)
+            print(f"   {get_status_icon('failed')} {Colors.RED}{Colors.BOLD}编译失败: 汇编文件未生成{Colors.RESET}")
         return False
     
     if verbose:
-        colored_print(f"编译成功，生成汇编文件: {asm_file}", Colors.GREEN)
+        print(f"   {get_status_icon('passed')} {Colors.GREEN}编译成功{Colors.RESET} → {Colors.DIM}{os.path.basename(asm_file)}{Colors.RESET}")
     return True
 
 def assemble_and_link(asm_file: str, lib_path: str, output_file: str, debug: bool = False, verbose: bool = True) -> bool:
@@ -87,23 +129,27 @@ def assemble_and_link(asm_file: str, lib_path: str, output_file: str, debug: boo
     if debug:
         cmd.extend(['-g', '-O0'])  # 调试模式通常不优化
         if verbose:
-            colored_print("汇编链接: 添加调试选项 -g -O0", Colors.YELLOW)
+            print(f"   {get_status_icon('info')} {Colors.YELLOW}调试模式: 添加 -g -O0 选项{Colors.RESET}")
     
     cmd.extend([asm_file, lib_path, '-o', output_file])
     
     if verbose:
-        colored_print(f"汇编链接: {' '.join(cmd)}", Colors.CYAN)
+        print(f"\n{get_status_icon('linking')} {Colors.BLUE}{Colors.BOLD}汇编链接{Colors.RESET}")
+        print(f"   {Colors.DIM}命令: {' '.join(cmd)}{Colors.RESET}")
     
     returncode, stdout, stderr = run_command(cmd)
     
     if returncode != 0:
         if verbose:
-            colored_print(f"汇编链接失败:", Colors.RED, bold=True)
-            colored_print(stderr, Colors.RED)
+            print(f"   {get_status_icon('failed')} {Colors.RED}{Colors.BOLD}链接失败{Colors.RESET}")
+            if stderr:
+                print(f"   {Colors.RED}错误信息:{Colors.RESET}")
+                for line in stderr.strip().split('\n'):
+                    print(f"   {Colors.DIM}{line}{Colors.RESET}")
         return False
     
     if verbose:
-        colored_print(f"汇编链接成功: {output_file}", Colors.GREEN)
+        print(f"   {get_status_icon('passed')} {Colors.GREEN}链接成功{Colors.RESET} → {Colors.DIM}{os.path.basename(output_file)}{Colors.RESET}")
     return True
 
 def run_program(program_path: str, input_text: str = "", simulator: str = "qemu-riscv64", interactive: bool = False) -> Tuple[int, str, str]:
@@ -138,42 +184,95 @@ def compare_output(expected: str, actual: str, show_diff: bool = True) -> bool:
     
     if show_diff:
         colored_print("输出不匹配:", Colors.RED, bold=True)
-        colored_print("期望输出:", Colors.YELLOW)
-        print(repr(expected))
-        colored_print("实际输出:", Colors.YELLOW)
-        print(repr(actual))
         
-        # 显示详细差异
-        colored_print("详细差异:", Colors.YELLOW)
-        diff = difflib.unified_diff(
-            expected.splitlines(keepends=True),
-            actual.splitlines(keepends=True),
-            fromfile='期望输出',
-            tofile='实际输出'
-        )
-        for line in diff:
-            if line.startswith('+'):
-                colored_print(line.rstrip(), Colors.GREEN)
-            elif line.startswith('-'):
-                colored_print(line.rstrip(), Colors.RED)
+        # 判断输出长度，如果较短则使用详细的diff显示
+        if len(expected) < 1000 and len(actual) < 1000:
+            # 显示详细差异
+            colored_print("期望输出 vs 实际输出:", Colors.YELLOW)
+            diff = difflib.unified_diff(
+                expected.splitlines(keepends=True),
+                actual.splitlines(keepends=True),
+                fromfile='期望输出',
+                tofile='实际输出',
+                lineterm=''
+            )
+            diff_lines = list(diff)
+            if diff_lines:
+                for line in diff_lines:
+                    if line.startswith('+++'):
+                        colored_print(line, Colors.CYAN)
+                    elif line.startswith('---'):
+                        colored_print(line, Colors.CYAN)
+                    elif line.startswith('@@'):
+                        colored_print(line, Colors.MAGENTA)
+                    elif line.startswith('+'):
+                        colored_print(line, Colors.GREEN)
+                    elif line.startswith('-'):
+                        colored_print(line, Colors.RED)
+                    else:
+                        print(line)
             else:
-                print(line.rstrip())
+                # 如果unified diff为空，可能是因为差异在空白字符
+                colored_print("期望输出:", Colors.YELLOW)
+                print(repr(expected))
+                colored_print("实际输出:", Colors.YELLOW)
+                print(repr(actual))
+        else:
+            # 对于长输出，只显示摘要
+            colored_print("期望输出长度:", Colors.YELLOW)
+            print(f"{len(expected)} 字符")
+            colored_print("实际输出长度:", Colors.YELLOW)
+            print(f"{len(actual)} 字符")
+            
+            # 显示前100个字符的差异
+            if expected[:100] != actual[:100]:
+                colored_print("前100字符差异:", Colors.YELLOW)
+                print("期望:", repr(expected[:100]))
+                print("实际:", repr(actual[:100]))
     
     return False
 
 def single_test(source_file: str, compiler_cmd: List[str], lib_path: str, 
                 input_file: str = None, output_file: str = None, 
                 simulator: str = "qemu-riscv64", mode: str = "run",
-                verbose: bool = True) -> bool:
+                verbose: bool = True, batch_mode: bool = False) -> Tuple[bool, str]:
     """单个文件测试
     Args:
         verbose: 是否显示详细输出，批量测试时可设为False
+        batch_mode: 是否为批量测试模式，影响进度显示
+    Returns:
+        (bool, str): (测试是否通过, 失败原因)
     """
+    # 如果没有指定输入输出文件，自动查找同目录下的.in和.out文件
+    if input_file is None or output_file is None:
+        source_path = Path(source_file)
+        base_name = source_path.stem
+        dir_path = source_path.parent
+        
+        if input_file is None:
+            auto_in_file = dir_path / f"{base_name}.in"
+            if auto_in_file.exists():
+                input_file = str(auto_in_file)
+                if verbose:
+                    print(f"   {get_status_icon('info')} {Colors.CYAN}自动检测到输入文件{Colors.RESET}: {Colors.DIM}{input_file}{Colors.RESET}")
+        
+        if output_file is None:
+            auto_out_file = dir_path / f"{base_name}.out"
+            if auto_out_file.exists():
+                output_file = str(auto_out_file)
+                if verbose:
+                    print(f"   {get_status_icon('info')} {Colors.CYAN}自动检测到输出文件{Colors.RESET}: {Colors.DIM}{output_file}{Colors.RESET}")
     # 创建临时目录
     with tempfile.TemporaryDirectory() as temp_dir:
         base_name = Path(source_file).stem
         asm_file = os.path.join(temp_dir, f"{base_name}.s")
         program_file = os.path.join(temp_dir, f"{base_name}")
+        
+        # 如果是批量测试模式，更新状态显示
+        if batch_mode and not verbose:
+            clear_line()
+            status_msg = f"{get_status_icon('compiling')} {Colors.YELLOW}编译中{Colors.RESET}: {Colors.DIM}{base_name}{Colors.RESET}"
+            print(status_msg, end='', flush=True)
         
         # 为调试模式添加 -g 选项
         actual_compiler_cmd = compiler_cmd.copy()
@@ -186,13 +285,38 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
         if not compile_program(actual_compiler_cmd, source_file, asm_file, verbose=verbose):
             if verbose:
                 colored_print(f"{base_name}: 失败 (编译错误)", Colors.RED)
-            return False
+            # 获取错误信息
+            returncode, stdout, stderr = run_command(actual_compiler_cmd + [source_file, '-o', asm_file], timeout=5)
+            if stderr:
+                # 提取错误信息的前5行
+                error_lines = stderr.strip().split('\n')
+                error_msg = '\n'.join(error_lines[:5])
+            else:
+                error_msg = '编译失败'
+            return False, error_msg
         
         # 汇编链接
+        if batch_mode and not verbose:
+            clear_line()
+            status_msg = f"{get_status_icon('linking')} {Colors.BLUE}链接中{Colors.RESET}: {Colors.DIM}{base_name}{Colors.RESET}"
+            print(status_msg, end='', flush=True)
+        
         if not assemble_and_link(asm_file, lib_path, program_file, debug=(mode == "debug"), verbose=verbose):
             if verbose:
                 colored_print(f"{base_name}: 失败 (链接错误)", Colors.RED)
-            return False
+            # 获取链接错误信息
+            cmd = ['riscv64-linux-gnu-gcc', '-static', '-march=rv64gc']
+            if mode == "debug":
+                cmd.extend(['-g', '-O0'])
+            cmd.extend([asm_file, lib_path, '-o', program_file])
+            returncode, stdout, stderr = run_command(cmd)
+            if stderr:
+                # 提取错误信息的前5行
+                error_lines = stderr.strip().split('\n')
+                error_msg = '\n'.join(error_lines[:5])
+            else:
+                error_msg = '链接失败'
+            return False, error_msg
         
         if mode == "debug":
             # 调试模式 - 复制可执行文件到当前目录以便调试
@@ -204,7 +328,7 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             colored_print("  (gdb) target remote | qemu-riscv64 -g 1234 ./程序名", Colors.YELLOW)
             colored_print("  或者直接: (gdb) run", Colors.YELLOW)
             os.system(f"riscv64-linux-gnu-gdb {debug_program}")
-            return True
+            return True, ""
         
         # 准备输入
         input_text = ""
@@ -217,29 +341,37 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             interactive = True
         
         # 运行程序
+        if batch_mode and not verbose:
+            clear_line()
+            status_msg = f"{get_status_icon('running')} {Colors.MAGENTA}运行中{Colors.RESET}: {Colors.DIM}{base_name}{Colors.RESET}"
+            print(status_msg, end='', flush=True)
+        
         if verbose:
-            colored_print(f"运行: {simulator} {program_file}", Colors.CYAN)
+            print(f"\n{get_status_icon('running')} {Colors.MAGENTA}{Colors.BOLD}运行程序{Colors.RESET}")
+            print(f"   {Colors.DIM}命令: {simulator} {os.path.basename(program_file)}{Colors.RESET}")
+        
         start_time = time.time()
         returncode, stdout, stderr = run_program(program_file, input_text, simulator, interactive)
         end_time = time.time()
         
         if verbose:
-            colored_print(f"运行时间: {end_time - start_time:.3f}s", Colors.BLUE)
-            colored_print(f"退出码: {returncode}", Colors.BLUE)
+            print(f"   {get_status_icon('info')} 运行时间: {Colors.BOLD}{end_time - start_time:.3f}s{Colors.RESET}, 退出码: {Colors.BOLD}{returncode}{Colors.RESET}")
         
         if stderr and verbose:
-            colored_print("标准错误:", Colors.YELLOW)
-            print(stderr)
+            print(f"\n   {Colors.YELLOW}{Colors.BOLD}标准错误:{Colors.RESET}")
+            for line in stderr.strip().split('\n'):
+                print(f"   {Colors.DIM}{line}{Colors.RESET}")
         
         # 如果模拟器不存在，直接返回失败
         if returncode == -1 and f"not found" in stderr:
             if verbose:
-                colored_print("测试失败: 模拟器不存在", Colors.RED, bold=True)
-            return False
+                print(f"\n{get_status_icon('failed')} {Colors.RED}{Colors.BOLD}测试失败: 模拟器不存在{Colors.RESET}")
+            return False, f"模拟器 {simulator} 不存在"
         
         if stdout and verbose:
-            colored_print("标准输出:", Colors.YELLOW)
-            print(stdout)
+            print(f"\n   {Colors.BLUE}{Colors.BOLD}标准输出:{Colors.RESET}")
+            for line in stdout.rstrip().split('\n'):
+                print(f"   {line}")
         
         # 检查输出
         if output_file and os.path.exists(output_file):
@@ -265,16 +397,27 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             
             if not stdout_matched or not returncode_matched:
                 if verbose:
-                    colored_print("测试失败", Colors.RED, bold=True)
+                    print(f"\n{get_status_icon('failed')} {Colors.RED}{Colors.BOLD}测试失败{Colors.RESET}")
                     if not stdout_matched:
-                        colored_print("标准输出不匹配", Colors.RED)
+                        print(f"   {Colors.RED}✗ 标准输出不匹配{Colors.RESET}")
                     if not returncode_matched:
-                        colored_print(f"返回值不匹配: 期望 {expected_returncode}, 实际 {returncode}", Colors.RED)
-                return False
+                        print(f"   {Colors.RED}✗ 返回值不匹配: 期望 {expected_returncode}, 实际 {returncode}{Colors.RESET}")
+                error_msg = ""
+                if not stdout_matched:
+                    error_msg = "输出不匹配"
+                    # 如果输出较短，可以显示部分差异
+                    if len(expected_stdout) < 100 and len(stdout) < 100:
+                        error_msg += f"\n期望: {repr(expected_stdout.strip()[:50])}"
+                        error_msg += f"\n实际: {repr(stdout.strip()[:50])}"
+                if not returncode_matched:
+                    if error_msg:
+                        error_msg += "\n"
+                    error_msg += f"返回值不匹配 (期望 {expected_returncode}, 实际 {returncode})"
+                return False, error_msg
         
         if verbose:
-            colored_print("测试通过", Colors.GREEN, bold=True)
-        return True
+            print(f"\n{get_status_icon('passed')} {Colors.GREEN}{Colors.BOLD}测试通过{Colors.RESET} ✓")
+        return True, ""
 
 def batch_test(test_dir: str, compiler_cmd: List[str], lib_path: str, 
                simulator: str = "qemu-riscv64") -> Tuple[int, int]:
@@ -284,17 +427,22 @@ def batch_test(test_dir: str, compiler_cmd: List[str], lib_path: str,
         colored_print(f"测试目录不存在: {test_dir}", Colors.RED, bold=True)
         return 0, 0
     
-    sy_files = list(test_path.glob("*.sy"))
+    sy_files = sorted(list(test_path.glob("*.sy")))  # 按文件名排序
     if not sy_files:
         colored_print(f"目录中没有找到.sy文件: {test_dir}", Colors.RED, bold=True)
         return 0, 0
     
-    colored_print(f"开始批量测试，共找到 {len(sy_files)} 个测试文件", Colors.BLUE, bold=True)
+    # 显示测试开始信息
+    print(f"\n{Colors.BLUE}{'━' * 60}{Colors.RESET}")
+    print(f"{get_status_icon('testing')} {Colors.BLUE}{Colors.BOLD}开始批量测试{Colors.RESET}")
+    print(f"   📁 测试目录: {Colors.DIM}{test_dir}{Colors.RESET}")
+    print(f"   📄 测试文件: {Colors.BOLD}{len(sy_files)}{Colors.RESET} 个")
+    print(f"{Colors.BLUE}{'━' * 60}{Colors.RESET}\n")
     
     passed = 0
     failed = 0
     
-    for sy_file in sy_files:
+    for i, sy_file in enumerate(sy_files):
         base_name = sy_file.stem
         in_file = test_path / f"{base_name}.in"
         out_file = test_path / f"{base_name}.out"
@@ -302,19 +450,80 @@ def batch_test(test_dir: str, compiler_cmd: List[str], lib_path: str,
         input_file = str(in_file) if in_file.exists() else None
         output_file = str(out_file) if out_file.exists() else None
         
-        if single_test(str(sy_file), compiler_cmd, lib_path, input_file, output_file, simulator, verbose=False):
-            colored_print(f"{base_name}: 通过", Colors.GREEN)
+        # 更新进度显示
+        progress = i + 1
+        progress_bar = get_progress_bar(i, len(sy_files))
+        percent = (i / len(sy_files)) * 100
+        
+        # 测试前显示当前测试项
+        clear_line()
+        status_text = f"{get_status_icon('testing')} 测试中 {progress_bar} {percent:5.1f}% [{progress}/{len(sy_files)}] {Colors.CYAN}{base_name}{Colors.RESET}"
+        print(status_text, end='', flush=True)
+        
+        # 执行测试
+        test_result, error_msg = single_test(str(sy_file), compiler_cmd, lib_path, input_file, output_file, simulator, mode="run", verbose=False, batch_mode=True)
+        
+        # 显示测试结果
+        clear_line()
+        if test_result:
+            result_icon = get_status_icon('passed')
+            result_color = Colors.GREEN
+            result_text = "PASS"
             passed += 1
+            # 打印格式化的测试结果
+            print(f"{result_icon} [{progress:3d}/{len(sy_files)}] {base_name:<40} {result_color}{Colors.BOLD}[{result_text}]{Colors.RESET}")
         else:
-            colored_print(f"{base_name}: 失败", Colors.RED)
+            result_icon = get_status_icon('failed')
+            result_color = Colors.RED
+            result_text = "FAIL"
             failed += 1
+            # 打印格式化的测试结果
+            print(f"{result_icon} [{progress:3d}/{len(sy_files)}] {base_name:<40} {result_color}{Colors.BOLD}[{result_text}]{Colors.RESET}")
+            # 显示失败原因
+            if error_msg:
+                # 处理多行错误信息，每行都要正确缩进
+                error_lines = error_msg.split('\n')
+                for i, line in enumerate(error_lines[:5]):  # 最多显示5行
+                    if i == 0:
+                        print(f"    {Colors.GRAY}↳ {line}{Colors.RESET}")
+                    else:
+                        print(f"      {Colors.GRAY}{line}{Colors.RESET}")
     
-    colored_print(f"\n{'='*60}", Colors.BLUE)
-    colored_print(f"批量测试完成", Colors.BLUE, bold=True)
-    colored_print(f"通过: {passed}", Colors.GREEN)
-    colored_print(f"失败: {failed}", Colors.RED)
-    colored_print(f"总计: {passed + failed}", Colors.BLUE)
-    colored_print(f"{'='*60}", Colors.BLUE)
+    # 测试结果总结
+    print()  # 空行
+    total = passed + failed
+    success_rate = passed / total * 100 if total > 0 else 0
+    
+    # 绘制分隔线
+    print(f"\n{Colors.BLUE}{'━' * 60}{Colors.RESET}")
+    
+    # 标题
+    title = "📊 测试结果总结"
+    print(f"{Colors.BLUE}{Colors.BOLD}{title:^60}{Colors.RESET}")
+    print(f"{Colors.BLUE}{'━' * 60}{Colors.RESET}")
+    
+    # 结果统计
+    print(f"\n  {get_status_icon('passed')} 通过: {Colors.GREEN}{Colors.BOLD}{passed:>4}{Colors.RESET} 个测试")
+    print(f"  {get_status_icon('failed')} 失败: {Colors.RED}{Colors.BOLD}{failed:>4}{Colors.RESET} 个测试")
+    print(f"  📋 总计: {Colors.BLUE}{Colors.BOLD}{total:>4}{Colors.RESET} 个测试")
+    
+    # 成功率进度条
+    print(f"\n  成功率: {Colors.BOLD}{success_rate:>5.1f}%{Colors.RESET}")
+    progress_width = 40
+    filled = int(progress_width * success_rate / 100)
+    
+    # 根据成功率选择颜色
+    if success_rate >= 90:
+        bar_color = Colors.GREEN
+    elif success_rate >= 70:
+        bar_color = Colors.YELLOW
+    else:
+        bar_color = Colors.RED
+        
+    bar = '█' * filled + '░' * (progress_width - filled)
+    print(f"  {bar_color}[{bar}]{Colors.RESET}")
+    
+    print(f"\n{Colors.BLUE}{'━' * 60}{Colors.RESET}")
     
     return passed, failed
 
@@ -496,7 +705,7 @@ def main():
                       args.simulator,
                       args.runs)
     else:
-        success = single_test(args.source, compiler_args, args.lib, 
+        success, _ = single_test(args.source, compiler_args, args.lib, 
                             input_file,
                             output_file,
                             args.simulator,
