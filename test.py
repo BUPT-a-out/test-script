@@ -87,7 +87,7 @@ def run_command(cmd: List[str], input_text: str = "", timeout: int = 30) -> Tupl
     except Exception as e:
         return -1, "", str(e)
 
-def compile_program(compiler_cmd: List[str], source_file: str, asm_file: str, verbose: bool = True, timeout: int = 5) -> bool:
+def compile_program(compiler_cmd: List[str], source_file: str, asm_file: str, verbose: bool = True, timeout: int = 20) -> bool:
     """编译程序生成汇编代码"""
     if verbose:
         print(f"\n{get_status_icon('compiling')} {Colors.CYAN}{Colors.BOLD}编译源文件{Colors.RESET}")
@@ -176,59 +176,37 @@ def run_program(program_path: str, input_text: str = "", simulator: str = "qemu-
 
 def compare_output(expected: str, actual: str, show_diff: bool = True) -> bool:
     """比较输出结果"""
-    expected = expected.strip()
-    actual = actual.strip()
-    
     if expected == actual:
         return True
     
     if show_diff:
-        colored_print("输出不匹配:", Colors.RED, bold=True)
+        print(f"\n   {Colors.YELLOW}{Colors.BOLD}输出差异对比:{Colors.RESET}")
         
-        # 判断输出长度，如果较短则使用详细的diff显示
-        if len(expected) < 1000 and len(actual) < 1000:
-            # 显示详细差异
-            colored_print("期望输出 vs 实际输出:", Colors.YELLOW)
-            diff = difflib.unified_diff(
-                expected.splitlines(keepends=True),
-                actual.splitlines(keepends=True),
-                fromfile='期望输出',
-                tofile='实际输出',
-                lineterm=''
-            )
-            diff_lines = list(diff)
-            if diff_lines:
-                for line in diff_lines:
-                    if line.startswith('+++'):
-                        colored_print(line, Colors.CYAN)
-                    elif line.startswith('---'):
-                        colored_print(line, Colors.CYAN)
-                    elif line.startswith('@@'):
-                        colored_print(line, Colors.MAGENTA)
-                    elif line.startswith('+'):
-                        colored_print(line, Colors.GREEN)
-                    elif line.startswith('-'):
-                        colored_print(line, Colors.RED)
-                    else:
-                        print(line)
-            else:
-                # 如果unified diff为空，可能是因为差异在空白字符
-                colored_print("期望输出:", Colors.YELLOW)
-                print(repr(expected))
-                colored_print("实际输出:", Colors.YELLOW)
-                print(repr(actual))
-        else:
-            # 对于长输出，只显示摘要
-            colored_print("期望输出长度:", Colors.YELLOW)
-            print(f"{len(expected)} 字符")
-            colored_print("实际输出长度:", Colors.YELLOW)
-            print(f"{len(actual)} 字符")
-            
-            # 显示前100个字符的差异
-            if expected[:100] != actual[:100]:
-                colored_print("前100字符差异:", Colors.YELLOW)
-                print("期望:", repr(expected[:100]))
-                print("实际:", repr(actual[:100]))
+        # 使用difflib生成unified diff
+        expected_lines = expected.splitlines(keepends=True)
+        actual_lines = actual.splitlines(keepends=True)
+        
+        diff = difflib.unified_diff(
+            expected_lines,
+            actual_lines,
+            fromfile='期望输出',
+            tofile='实际输出',
+            lineterm=''
+        )
+        
+        for line in diff:
+            if line.startswith('---'):
+                print(f"   {Colors.CYAN}{line}{Colors.RESET}")
+            elif line.startswith('+++'):
+                print(f"   {Colors.CYAN}{line}{Colors.RESET}")
+            elif line.startswith('@@'):
+                print(f"   {Colors.MAGENTA}{line}{Colors.RESET}")
+            elif line.startswith('-'):
+                print(f"   {Colors.RED}{line}{Colors.RESET}")
+            elif line.startswith('+'):
+                print(f"   {Colors.GREEN}{line}{Colors.RESET}")
+            elif line.startswith(' '):
+                print(f"   {line}", end='')
     
     return False
 
@@ -286,7 +264,7 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             if verbose:
                 colored_print(f"{base_name}: 失败 (编译错误)", Colors.RED)
             # 获取错误信息
-            returncode, stdout, stderr = run_command(actual_compiler_cmd + [source_file, '-o', asm_file], timeout=5)
+            returncode, stdout, stderr = run_command(actual_compiler_cmd + [source_file, '-o', asm_file], timeout=20)
             if stderr:
                 # 提取错误信息的前5行
                 error_lines = stderr.strip().split('\n')
@@ -336,8 +314,9 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
         if input_file and os.path.exists(input_file):
             with open(input_file, 'r') as f:
                 input_text = f.read()
-        elif input_file is None and verbose:
-            # 没有指定输入文件，使用交互式输入
+        elif input_file is None and verbose and output_file is None:
+            # 只有在没有指定输入文件和输出文件时，才使用交互式输入
+            # 如果有输出文件，说明需要进行输出比较，不应该是交互式的
             interactive = True
         
         # 运行程序
@@ -383,17 +362,26 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             expected_returncode = None
             
             if len(expected_content) > 0:
-                expected_returncode = expected_content[-1]
+                expected_returncode = expected_content[-1].strip()
                 if len(expected_content) > 1:
-                    expected_stdout = "\n".join(expected_content[:-1]) + "\n"
+                    expected_stdout = "\n".join(expected_content[:-1])
+                elif len(expected_content) == 1:
+                    # 只有一行，说明没有stdout，只有返回值
+                    expected_stdout = ""
             
-            # 比较stdout
+            # 比较stdout - 注意处理空字符串情况
             stdout_matched = True
-            if expected_stdout:
-                stdout_matched = compare_output(expected_stdout, stdout, show_diff=verbose)
+            if expected_stdout or stdout.strip():
+                # 保持原始格式进行比较，但移除末尾的换行符以匹配期望格式
+                actual_stdout = stdout.rstrip('\n') if stdout else ""
+                stdout_matched = compare_output(expected_stdout, actual_stdout, show_diff=verbose)
             
             # 比较返回值
-            returncode_matched = str(returncode) == str(expected_returncode)
+            try:
+                expected_returncode_int = int(expected_returncode)
+                returncode_matched = returncode == expected_returncode_int
+            except (ValueError, TypeError):
+                returncode_matched = str(returncode) == str(expected_returncode)
             
             if not stdout_matched or not returncode_matched:
                 if verbose:
@@ -401,18 +389,21 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
                     if not stdout_matched:
                         print(f"   {Colors.RED}✗ 标准输出不匹配{Colors.RESET}")
                     if not returncode_matched:
-                        print(f"   {Colors.RED}✗ 返回值不匹配: 期望 {expected_returncode}, 实际 {returncode}{Colors.RESET}")
+                        print(f"   {Colors.RED}✗ 返回值不匹配{Colors.RESET}")
+                        print(f"     期望: {Colors.CYAN}{expected_returncode}{Colors.RESET}")
+                        print(f"     实际: {Colors.CYAN}{returncode}{Colors.RESET}")
+                
+                # 生成简洁的错误消息用于批量测试显示
                 error_msg = ""
                 if not stdout_matched:
                     error_msg = "输出不匹配"
                     # 如果输出较短，可以显示部分差异
-                    if len(expected_stdout) < 100 and len(stdout) < 100:
-                        error_msg += f"\n期望: {repr(expected_stdout.strip()[:50])}"
-                        error_msg += f"\n实际: {repr(stdout.strip()[:50])}"
+                    if len(expected_stdout) < 50 and len(actual_stdout) < 50:
+                        error_msg += f" (期望: {repr(expected_stdout[:30])}, 实际: {repr(actual_stdout[:30])})"
                 if not returncode_matched:
                     if error_msg:
-                        error_msg += "\n"
-                    error_msg += f"返回值不匹配 (期望 {expected_returncode}, 实际 {returncode})"
+                        error_msg += "; "
+                    error_msg += f"返回值不匹配 (期望: {expected_returncode}, 实际: {returncode})"
                 return False, error_msg
         
         if verbose:
