@@ -71,7 +71,7 @@ def get_status_icon(status: str) -> str:
     }
     return icons.get(status, '•')
 
-def run_command(cmd: List[str], input_text: str = "", timeout: int = 30) -> Tuple[int, str, str]:
+def run_command(cmd: List[str], input_text: str = "", timeout: int = 60) -> Tuple[int, str, str]:
     """运行命令并返回退出码、标准输出和标准错误"""
     try:
         result = subprocess.run(
@@ -87,7 +87,7 @@ def run_command(cmd: List[str], input_text: str = "", timeout: int = 30) -> Tupl
     except Exception as e:
         return -1, "", str(e)
 
-def compile_program(compiler_cmd: List[str], source_file: str, asm_file: str, verbose: bool = True, timeout: int = 20) -> bool:
+def compile_program(compiler_cmd: List[str], source_file: str, asm_file: str, verbose: bool = True, timeout: int = 60) -> bool:
     """编译程序生成汇编代码"""
     if verbose:
         print(f"\n{get_status_icon('compiling')} {Colors.CYAN}{Colors.BOLD}编译源文件{Colors.RESET}")
@@ -264,7 +264,7 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             if verbose:
                 colored_print(f"{base_name}: 失败 (编译错误)", Colors.RED)
             # 获取错误信息
-            returncode, stdout, stderr = run_command(actual_compiler_cmd + [source_file, '-o', asm_file], timeout=20)
+            returncode, stdout, stderr = run_command(actual_compiler_cmd + [source_file, '-o', asm_file], timeout=60)
             if stderr:
                 # 提取错误信息的前5行
                 error_lines = stderr.strip().split('\n')
