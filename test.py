@@ -182,33 +182,163 @@ def compare_output(expected: str, actual: str, show_diff: bool = True) -> bool:
     if show_diff:
         print(f"\n   {Colors.YELLOW}{Colors.BOLD}输出差异对比:{Colors.RESET}")
         
-        # 使用difflib生成unified diff
-        expected_lines = expected.splitlines(keepends=True)
-        actual_lines = actual.splitlines(keepends=True)
+        # 使用系统diff命令
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.expected', delete=False) as expected_file:
+            expected_file.write(expected)
+            expected_file.flush()
+            expected_path = expected_file.name
         
-        diff = difflib.unified_diff(
-            expected_lines,
-            actual_lines,
-            fromfile='期望输出',
-            tofile='实际输出',
-            lineterm=''
-        )
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.actual', delete=False) as actual_file:
+            actual_file.write(actual)
+            actual_file.flush()
+            actual_path = actual_file.name
         
-        for line in diff:
-            if line.startswith('---'):
-                print(f"   {Colors.CYAN}{line}{Colors.RESET}")
-            elif line.startswith('+++'):
-                print(f"   {Colors.CYAN}{line}{Colors.RESET}")
-            elif line.startswith('@@'):
-                print(f"   {Colors.MAGENTA}{line}{Colors.RESET}")
-            elif line.startswith('-'):
-                print(f"   {Colors.RED}{line}{Colors.RESET}")
-            elif line.startswith('+'):
-                print(f"   {Colors.GREEN}{line}{Colors.RESET}")
-            elif line.startswith(' '):
-                print(f"   {line}", end='')
+        try:
+            # 使用diff -u命令生成unified diff
+            diff_cmd = ['diff', '-u', '--label=期望输出', '--label=实际输出', expected_path, actual_path]
+            returncode, stdout, stderr = run_command(diff_cmd, timeout=10)
+            
+            if stdout:
+                for line in stdout.split('\n'):
+                    if line.startswith('---'):
+                        print(f"   {Colors.CYAN}{line}{Colors.RESET}")
+                    elif line.startswith('+++'):
+                        print(f"   {Colors.CYAN}{line}{Colors.RESET}")
+                    elif line.startswith('@@'):
+                        print(f"   {Colors.MAGENTA}{line}{Colors.RESET}")
+                    elif line.startswith('-'):
+                        print(f"   {Colors.RED}{line}{Colors.RESET}")
+                    elif line.startswith('+'):
+                        print(f"   {Colors.GREEN}{line}{Colors.RESET}")
+                    elif line.startswith(' '):
+                        print(f"   {line}")
+                    elif line.strip():  # 非空行但不匹配上面的模式
+                        print(f"   {line}")
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(expected_path)
+                os.unlink(actual_path)
+            except:
+                pass
     
     return False
+
+def generate_reference_output(source_file: str, input_text: str, verbose: bool = True) -> Tuple[str, int]:
+    """使用clang/gcc生成参考输出
+    
+    Args:
+        source_file: 源文件路径
+        input_text: 输入内容
+        verbose: 是否显示详细信息
+    
+    Returns:
+        (stdout, returncode): 标准输出和返回值，失败时返回(None, None)
+    """
+    script_dir = get_script_dir()
+    sylib_c = script_dir / 'lib' / 'sylib.c'
+    sylib_h = script_dir / 'lib' / 'sylib.h'
+    
+    # 检查运行时库文件是否存在
+    if not sylib_c.exists() or not sylib_h.exists():
+        if verbose:
+            print(f"   {get_status_icon('failed')} {Colors.RED}运行时库文件不存在{Colors.RESET}")
+        return None, None
+    
+    # 优先使用clang，如果不存在则使用gcc
+    compiler = None
+    for cmd in ['clang', 'gcc']:
+        if shutil.which(cmd):
+            compiler = cmd
+            break
+    
+    if not compiler:
+        if verbose:
+            print(f"   {get_status_icon('failed')} {Colors.RED}未找到clang或gcc编译器{Colors.RESET}")
+        return None, None
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # 读取源文件内容
+        try:
+            with open(source_file, 'r', encoding='utf-8') as f:
+                source_content = f.read()
+        except Exception as e:
+            if verbose:
+                print(f"   {get_status_icon('failed')} {Colors.RED}读取源文件失败: {e}{Colors.RESET}")
+            return None, None
+        
+        # 创建临时C文件，添加sylib.h的include并复制源文件内容
+        temp_c_file = os.path.join(temp_dir, 'temp_program.c')
+        try:
+            with open(temp_c_file, 'w', encoding='utf-8') as f:
+                f.write('#include "sylib.h"\n')
+                f.write(source_content)
+        except Exception as e:
+            if verbose:
+                print(f"   {get_status_icon('failed')} {Colors.RED}创建临时C文件失败: {e}{Colors.RESET}")
+            return None, None
+        
+        # 创建修改后的sylib.h，将变量定义改为extern声明
+        temp_sylib_h = os.path.join(temp_dir, 'sylib.h')
+        try:
+            with open(sylib_h, 'r', encoding='utf-8') as f:
+                sylib_h_content = f.read()
+            
+            # 修改sylib.h内容，将变量定义改为extern声明
+            modified_sylib_h = sylib_h_content.replace(
+                'struct timeval _sysy_start, _sysy_end;',
+                'extern struct timeval _sysy_start, _sysy_end;'
+            ).replace(
+                'int _sysy_l1[_SYSY_N], _sysy_l2[_SYSY_N];',
+                'extern int _sysy_l1[_SYSY_N], _sysy_l2[_SYSY_N];'
+            ).replace(
+                'int _sysy_h[_SYSY_N], _sysy_m[_SYSY_N], _sysy_s[_SYSY_N], _sysy_us[_SYSY_N];',
+                'extern int _sysy_h[_SYSY_N], _sysy_m[_SYSY_N], _sysy_s[_SYSY_N], _sysy_us[_SYSY_N];'
+            ).replace(
+                'int _sysy_idx;',
+                'extern int _sysy_idx;'
+            )
+            
+            with open(temp_sylib_h, 'w', encoding='utf-8') as f:
+                f.write(modified_sylib_h)
+        except Exception as e:
+            if verbose:
+                print(f"   {get_status_icon('failed')} {Colors.RED}创建修改后的sylib.h失败: {e}{Colors.RESET}")
+            return None, None
+        
+        # 一次编译链接所有文件
+        temp_program = os.path.join(temp_dir, 'temp_program')
+        compile_cmd = [compiler, temp_c_file, str(sylib_c), '-o', temp_program, '-lm']
+        
+        if verbose:
+            print(f"   {get_status_icon('compiling')} {Colors.CYAN}使用{compiler}编译参考程序{Colors.RESET}")
+            print(f"   {Colors.DIM}命令: {' '.join(compile_cmd)}{Colors.RESET}")
+        
+        returncode, stdout, stderr = run_command(compile_cmd, timeout=30)
+        
+        if returncode != 0:
+            if verbose:
+                print(f"   {get_status_icon('failed')} {Colors.RED}参考程序编译失败{Colors.RESET}")
+                if stderr:
+                    print(f"   {Colors.RED}错误信息:{Colors.RESET}")
+                    for line in stderr.strip().split('\n')[:3]:  # 只显示前3行错误
+                        print(f"   {Colors.DIM}{line}{Colors.RESET}")
+            return None, None
+        
+        # 运行程序获取参考输出
+        if verbose:
+            print(f"   {get_status_icon('running')} {Colors.MAGENTA}运行参考程序{Colors.RESET}")
+        
+        ref_returncode, ref_stdout, ref_stderr = run_command([temp_program], input_text, timeout=30)
+        
+        if verbose:
+            print(f"   {get_status_icon('info')} 参考程序退出码: {Colors.BOLD}{ref_returncode}{Colors.RESET}")
+            if ref_stdout:
+                print(f"   {Colors.BLUE}{Colors.BOLD}参考输出:{Colors.RESET}")
+                for line in ref_stdout.rstrip().split('\n'):
+                    print(f"   {line}")
+        
+        return ref_stdout.rstrip('\n') if ref_stdout else "", ref_returncode
 
 def single_test(source_file: str, compiler_cmd: List[str], lib_path: str, 
                 input_file: str = None, output_file: str = None, 
@@ -352,15 +482,15 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             for line in stdout.rstrip().split('\n'):
                 print(f"   {line}")
         
-        # 检查输出
+        # 检查输出 - 如果没有期望输出文件，使用clang/gcc生成参考输出
+        expected_stdout = ""
+        expected_returncode = None
+        
         if output_file and os.path.exists(output_file):
             with open(output_file, 'r') as f:
                 expected_content = f.read().splitlines()
             
             # 解析期望输出：最后一行是返回值，前面的是stdout
-            expected_stdout = ""
-            expected_returncode = None
-            
             if len(expected_content) > 0:
                 expected_returncode = expected_content[-1].strip()
                 if len(expected_content) > 1:
@@ -368,20 +498,40 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
                 elif len(expected_content) == 1:
                     # 只有一行，说明没有stdout，只有返回值
                     expected_stdout = ""
+        elif not interactive:
+            # 如果没有期望输出文件，使用clang/gcc生成参考输出
+            if verbose:
+                print(f"\n   {get_status_icon('info')}  {Colors.YELLOW}未找到期望输出文件，使用 clang/gcc 生成参考输出{Colors.RESET}")
             
+            expected_stdout, expected_returncode = generate_reference_output(source_file, input_text, verbose)
+            if expected_stdout is None and expected_returncode is None:
+                if verbose:
+                    print(f"   {get_status_icon('warning')} {Colors.YELLOW}无法生成参考输出，跳过输出比较{Colors.RESET}")
+                # 无法生成参考输出时，只检查程序是否成功运行
+                if returncode != 0:
+                    return False, f"程序运行失败 (退出码: {returncode})"
+                else:
+                    if verbose:
+                        print(f"\n{get_status_icon('passed')} {Colors.GREEN}{Colors.BOLD}测试通过{Colors.RESET} ✓")
+                    return True, ""
+        
+        # 如果有期望输出（来自文件或clang/gcc），进行比较
+        if expected_stdout is not None or expected_returncode is not None:
             # 比较stdout - 注意处理空字符串情况
             stdout_matched = True
-            if expected_stdout or stdout.strip():
+            if expected_stdout is not None:
                 # 保持原始格式进行比较，但移除末尾的换行符以匹配期望格式
                 actual_stdout = stdout.rstrip('\n') if stdout else ""
                 stdout_matched = compare_output(expected_stdout, actual_stdout, show_diff=verbose)
             
             # 比较返回值
-            try:
-                expected_returncode_int = int(expected_returncode)
-                returncode_matched = returncode == expected_returncode_int
-            except (ValueError, TypeError):
-                returncode_matched = str(returncode) == str(expected_returncode)
+            returncode_matched = True
+            if expected_returncode is not None:
+                try:
+                    expected_returncode_int = int(expected_returncode)
+                    returncode_matched = returncode == expected_returncode_int
+                except (ValueError, TypeError):
+                    returncode_matched = str(returncode) == str(expected_returncode)
             
             if not stdout_matched or not returncode_matched:
                 if verbose:
@@ -398,7 +548,8 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
                 if not stdout_matched:
                     error_msg = "输出不匹配"
                     # 如果输出较短，可以显示部分差异
-                    if len(expected_stdout) < 50 and len(actual_stdout) < 50:
+                    actual_stdout = stdout.rstrip('\n') if stdout else ""
+                    if expected_stdout and len(expected_stdout) < 50 and len(actual_stdout) < 50:
                         error_msg += f" (期望: {repr(expected_stdout[:30])}, 实际: {repr(actual_stdout[:30])})"
                 if not returncode_matched:
                     if error_msg:
