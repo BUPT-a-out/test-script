@@ -492,7 +492,7 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             if len(expected_content) > 0:
                 expected_returncode = expected_content[-1].strip()
                 if len(expected_content) > 1:
-                    expected_stdout = "\n".join(expected_content[:-1])
+                    expected_stdout = "\n".join(expected_content[:-1]).rstrip('\n')
                 elif len(expected_content) == 1:
                     # 只有一行，说明没有stdout，只有返回值
                     expected_stdout = ""
