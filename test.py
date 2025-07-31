@@ -327,12 +327,12 @@ def generate_reference_output(source_file: str, input_text: str, verbose: bool =
         
         # 运行程序获取参考输出
         if verbose:
-            print(f"   {get_status_icon('running')} {Colors.MAGENTA}运行参考程序{Colors.RESET}")
+            print(f"\n{get_status_icon('running')} {Colors.MAGENTA}运行参考程序{Colors.RESET}")
         
         ref_returncode, ref_stdout, ref_stderr = run_command([temp_program], input_text, timeout=30)
         
         if verbose:
-            print(f"   {get_status_icon('info')} 参考程序退出码: {Colors.BOLD}{ref_returncode}{Colors.RESET}")
+            print(f"   {get_status_icon('info')}  参考程序退出码: {Colors.BOLD}{ref_returncode}{Colors.RESET}")
             if ref_stdout:
                 print(f"   {Colors.BLUE}{Colors.BOLD}参考输出:{Colors.RESET}")
                 for line in ref_stdout.rstrip().split('\n'):
@@ -440,14 +440,12 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
         
         # 准备输入
         input_text = ""
-        interactive = False
         if input_file and os.path.exists(input_file):
             with open(input_file, 'r') as f:
                 input_text = f.read()
-        elif input_file is None and verbose and output_file is None:
-            # 只有在没有指定输入文件和输出文件时，才使用交互式输入
-            # 如果有输出文件，说明需要进行输出比较，不应该是交互式的
-            interactive = True
+        elif input_file is None and verbose:
+            print(f"   {get_status_icon('info')}  {Colors.YELLOW}没有找到输入文件，程序将以空输入运行{Colors.RESET}")
+        # 总是使用非交互模式来捕获输出进行比较
         
         # 运行程序
         if batch_mode and not verbose:
@@ -460,11 +458,11 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             print(f"   {Colors.DIM}命令: {simulator} {os.path.basename(program_file)}{Colors.RESET}")
         
         start_time = time.time()
-        returncode, stdout, stderr = run_program(program_file, input_text, simulator, interactive)
+        returncode, stdout, stderr = run_program(program_file, input_text, simulator, interactive=False)
         end_time = time.time()
         
         if verbose:
-            print(f"   {get_status_icon('info')} 运行时间: {Colors.BOLD}{end_time - start_time:.3f}s{Colors.RESET}, 退出码: {Colors.BOLD}{returncode}{Colors.RESET}")
+            print(f"   {get_status_icon('info')}  运行时间: {Colors.BOLD}{end_time - start_time:.3f}s{Colors.RESET}, 退出码: {Colors.BOLD}{returncode}{Colors.RESET}")
         
         if stderr and verbose:
             print(f"\n   {Colors.YELLOW}{Colors.BOLD}标准错误:{Colors.RESET}")
@@ -498,10 +496,10 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
                 elif len(expected_content) == 1:
                     # 只有一行，说明没有stdout，只有返回值
                     expected_stdout = ""
-        elif not interactive:
+        else:
             # 如果没有期望输出文件，使用clang/gcc生成参考输出
             if verbose:
-                print(f"\n   {get_status_icon('info')}  {Colors.YELLOW}未找到期望输出文件，使用 clang/gcc 生成参考输出{Colors.RESET}")
+                print(f"   {get_status_icon('info')}  {Colors.YELLOW}未找到期望输出文件，使用clang/gcc生成参考输出{Colors.RESET}")
             
             expected_stdout, expected_returncode = generate_reference_output(source_file, input_text, verbose)
             if expected_stdout is None and expected_returncode is None:
