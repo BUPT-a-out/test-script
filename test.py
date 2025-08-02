@@ -382,13 +382,7 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
             status_msg = f"{get_status_icon('compiling')} {Colors.YELLOW}编译中{Colors.RESET}: {Colors.DIM}{base_name}{Colors.RESET}"
             print(status_msg, end='', flush=True)
         
-        # 为调试模式添加 -g 选项
         actual_compiler_cmd = compiler_cmd.copy()
-        if mode == "debug" and "-g" not in actual_compiler_cmd:
-            actual_compiler_cmd.append("-g")
-            if verbose:
-                colored_print("调试模式: 添加 -g 选项生成调试信息", Colors.YELLOW)
-        
         # 编译生成汇编文件
         if not compile_program(actual_compiler_cmd, source_file, asm_file, verbose=verbose):
             if verbose:
@@ -428,14 +422,58 @@ def single_test(source_file: str, compiler_cmd: List[str], lib_path: str,
         
         if mode == "debug":
             # 调试模式 - 复制可执行文件到当前目录以便调试
-            debug_program = f"{base_name}_debug"
-            shutil.copy2(program_file, debug_program)
-            colored_print(f"调试程序已复制到: {debug_program}", Colors.MAGENTA)
-            colored_print(f"启动调试器: riscv64-linux-gnu-gdb {debug_program}", Colors.MAGENTA, bold=True)
-            colored_print("调试提示:", Colors.YELLOW)
-            colored_print("  (gdb) target remote | qemu-riscv64 -g 1234 ./程序名", Colors.YELLOW)
-            colored_print("  或者直接: (gdb) run", Colors.YELLOW)
-            os.system(f"riscv64-linux-gnu-gdb {debug_program}")
+            colored_print(f"调试程序已复制到: {program_file}", Colors.MAGENTA)
+            
+            # 查找同名的.in文件作为输入
+            source_path = Path(source_file)
+            source_dir = source_path.parent
+            in_file_path = source_dir / f"{base_name}.in"
+            
+            # 找到一个可用的端口
+            debug_port = find_free_port()
+            colored_print(f"使用调试端口: {debug_port}", Colors.CYAN)
+            
+            # 准备QEMU启动参数
+            qemu_cmd = ['qemu-riscv64', '-g', str(debug_port), program_file]
+            qemu_stdin = None
+            
+            # 如果找到.in文件，作为输入
+            if in_file_path.exists():
+                colored_print(f"发现输入文件: {in_file_path}", Colors.CYAN)
+                qemu_stdin = open(in_file_path, 'r')
+            
+            # 在后台启动qemu-riscv64 -g <port>
+            colored_print("正在启动QEMU调试服务器...", Colors.CYAN)
+            qemu_proc = subprocess.Popen(
+                qemu_cmd,
+                stdin=qemu_stdin
+            )
+            
+            try:
+                # 等待一下让QEMU启动
+                time.sleep(1)
+                
+                # 启动gdb-multiarch并连接到远程调试服务器
+                colored_print("正在启动GDB调试器...", Colors.CYAN)
+                gdb_cmd = f"gdb-multiarch -ex 'target remote :{debug_port}' {program_file}"
+                os.system(gdb_cmd)
+                
+            finally:
+                # 调试器退出后，检查并kill qemu进程
+                if qemu_proc.poll() is None:  # 进程仍在运行
+                    colored_print("正在关闭QEMU调试服务器...", Colors.YELLOW)
+                    qemu_proc.terminate()
+                    try:
+                        qemu_proc.wait(timeout=5)  # 等待最多5秒
+                    except subprocess.TimeoutExpired:
+                        colored_print("强制关闭QEMU进程...", Colors.RED)
+                        qemu_proc.kill()
+                        qemu_proc.wait()
+                
+                # 关闭文件句柄
+                if qemu_stdin:
+                    qemu_stdin.close()
+            
             return True, ""
         
         # 准备输入
@@ -776,6 +814,23 @@ def parse_compiler_args(args: List[str]) -> Tuple[List[str], Optional[str], Opti
             i += 1
     
     return compiler_args, input_file, output_file
+
+def find_free_port(start_port=1234, max_attempts=100):
+    """找到一个未被占用的端口"""
+    import socket
+    
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(('localhost', port))
+                return port
+        except OSError:
+            continue
+    
+    # 如果没找到可用端口，回退到随机端口
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('localhost', 0))  # 0表示让系统分配端口
+        return s.getsockname()[1]
 
 def get_script_dir():
     """获取脚本所在的目录"""
